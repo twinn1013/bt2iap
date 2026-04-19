@@ -1,0 +1,8 @@
+# oh-my-claudecode local state — not part of the product
+.omc/
+
+# Claude Code local settings
+.claude/
+
+# macOS
+.DS_Store
