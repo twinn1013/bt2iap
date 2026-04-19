@@ -14,7 +14,7 @@ The Pi presents itself as an Apple iPod using the `ipod-gadget` kernel module ov
 
 ## Status
 
-Pre-hardware. T1 complete. T2 (audio path) in progress / complete. See `.omc/specs/deep-interview-pre-pi-prep.md` for the tiered plan.
+Pre-hardware. T1 + T2 complete. T3 (iAP deep recovery runbook) complete. See `.omc/specs/deep-interview-pre-pi-prep.md` for the tiered plan.
 
 ## Hardware
 
@@ -26,13 +26,15 @@ Pre-hardware. T1 complete. T2 (audio path) in progress / complete. See `.omc/spe
 
 ```
 bt2iap/
-|-- scripts/       # Pi-side automation (bootstrap, gadget load, product_id loop, audio bridge, verify)
+|-- scripts/       # Pi-side automation (bootstrap, gadget load, product_id loop,
+|                  #   audio bridge, verify-audio, collect-diagnostics)
 |-- systemd/       # Unit files installed to /etc/systemd/system/ (+ drop-in overrides)
 |-- boot/          # Patches for /boot/config.txt and /boot/cmdline.txt
 |-- bluetooth/     # BlueZ config patch and pairing agent script
 |-- alsa/          # ALSA routing config (A2DP sink -> loopback -> iPodUSB)
-|-- docs/          # Research notes, verification checklists, audio topology diagram
-|-- Makefile       # Mac-side quality gates
+|-- docs/          # Research notes, verification checklists, audio topology diagram,
+|                  #   triage matrix (triage.md), iAP auth deep-dive (iap-auth-deep-dive.md)
+|-- Makefile       # Mac-side quality gates (check-t1, check-t2, check-t3)
 `-- CLAUDE.md      # Project context for AI assistants
 ```
 
@@ -146,13 +148,52 @@ The script runs 10 checks in order:
 
 Exits 0 if all pass, 1 otherwise. Use `--verbose` for extra diagnostic dumps.
 
+## T3 usage (operator runbook)
+
+### Failure triage
+
+`docs/triage.md` covers all 4 failure modes with a symptom / confirm-command / action matrix:
+
+1. `dmesg` shows authentication error from head unit
+2. MMCS sees device but won't play
+3. Pi boot-loops in car
+4. Audio path issues
+
+**Policy (2026-04-19):** FM transmitter fallback is explicitly rejected. The project commits to iAP to completion. The triage doc reflects this — auth failures route to deeper iAP recovery, not FM pivot.
+
+### Deep auth recovery
+
+`docs/iap-auth-deep-dive.md` documents the 4-stage escalation path for auth failures:
+
+1. Exhaust `product_id` candidates from `doc/apple-usb.ids` in `oandrew/ipod-gadget`
+2. MFi authentication chip add-on feasibility (circuit and driver change points)
+3. Scan upstream `oandrew/ipod-gadget` issues and forks for known auth-handshake fixes
+4. iAP protocol reverse-engineering direction notes
+
+### Support bundle
+
+When filing a bug or escalating a failure, collect a diagnostic bundle on the Pi:
+
+```bash
+sudo /opt/bt2iap/scripts/collect-diagnostics.sh
+```
+
+This gathers: `uname`, `os-release`, `lsmod`, `lsusb`, ALSA card state, BlueZ/BlueALSA service status, per-service `journalctl` tails, and filtered `dmesg` output — packed into a single `.tar.gz`. Bluetooth MAC addresses are partially masked (OUI retained). Review for Wi-Fi SSIDs before sharing.
+
+Use `--no-tar` to leave the directory unpacked for local inspection:
+
+```bash
+sudo /opt/bt2iap/scripts/collect-diagnostics.sh --no-tar
+```
+
 ## Developer quality gates (on Mac)
 
 ```bash
 brew install shellcheck make
-make check        # runs check-t1 then check-t2
+make check        # runs check-t1, check-t2, check-t3
 make check-t1     # T1 gates only
 make check-t2     # T2 gates only
+make check-t3     # T3 gates only
 ```
 
 `make check-t1` runs:
@@ -167,6 +208,13 @@ make check-t2     # T2 gates only
 3. ALSA config sanity check (`alsa/asound.conf` contains `pcm.*` or `type` directives)
 4. Docs presence check (`docs/audio-topology.md` exists and is non-empty)
 5. BlueZ patch payload check (`bluetooth/main.conf.patch.block` contains sentinel + `[General]`/`[Policy]`)
+
+`make check-t3` runs:
+1. `shellcheck -x` on all files in `scripts/` (includes `collect-diagnostics.sh`)
+2. T3 docs presence check (`docs/triage.md` and `docs/iap-auth-deep-dive.md` exist and are non-empty)
+3. Cross-reference sanity: `docs/triage.md` must contain the string `iap-auth-deep-dive.md` (confirms escalation link is present)
+4. FM transmitter rejection context: if `FM transmitter` appears in `docs/triage.md`, it must be within 3 lines of a rejection keyword (`rejected`, `거부`, `명시적`, `policy`, or `금지`)
+5. `scripts/collect-diagnostics.sh` exists and is executable
 
 ## Failure triage
 
