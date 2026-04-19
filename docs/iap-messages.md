@@ -102,12 +102,13 @@ iAP1 은 각 기능군을 **lingo** (또는 "mode" byte)로 분리한다. PodEmu
 |-----------|-----------|------|-----------------|
 | `0x00` | **General Lingo** | 세션 시작/종료, mode switch, device info query, 인증 핸드셰이크 트리거 | `OAPMessenger.java:419-616` (case 0x01/0x03/0x05/0x06/0x07/0x0B/0x0D/0x0F/0x13/0x24/0x28 처리 블록). `IPOD_MODE_UNKNOWN=0x00` @ L40. |
 | `0x02` | **SimpleRemote Lingo** | 1-버튼(또는 비트맵) 재생 제어. 스티어링휠 버튼 매핑의 주 타깃. | `OAPMessenger.java:617-797` (case 0x0001/0x0008/0x0010/0x0080 등). `IPOD_MODE_SIMPLE=0x02` @ L41. |
-| `0x03` | **DisplayRemote / Polling Lingo** | 간단한 상태 표시 요청 (재생 중/정지 등). PodEmu에서는 별도 스위치로 깊게 다루지 않음. | 간접 참조 — `oap_04_write_polling_*` 계열 응답(`OAPMessenger.java:1892+`)이 이 체인에 물림. |
 | `0x04` | **ExtendedInterface (AiR) Lingo** | DB 탐색, 플레이리스트 조작, 트랙 메타데이터 (제목/아티스트/앨범/길이). 우리가 메타데이터 표시에서 쓸 주력. | `OAPMessenger.java:804-1488` 의 거대한 `case 0x____` 스위치. `IPOD_MODE_AIR=0x04` @ L42. |
 | `0x0A` | DigitalAudio Lingo | USB Audio Class 스트림 활성화 관련 (Apple의 독자 UAC 확장). | 본 프로젝트에서는 `g_ipod_audio` 모듈이 UAC1 표준 경로로 처리하므로 직접 다룰 일 적음. |
 | `0x0E` | AppInterface Lingo | iOS 앱 측 데이터 교환 용도. 헤드유닛 용도로는 거의 안 씀. | 미사용. |
 
 실제로 우리가 **구현해야 할 대상은 `0x00`, `0x02`, `0x04` 세 개**다. `0x00`은 세션 진입을 제어하고, `0x02` 는 버튼 비트맵을 읽고, `0x04` 는 메타데이터 질문에 답한다.
+
+> 정정 (factual correction 2026-04-19): 이전 판본에는 `0x03` 을 별도의 "DisplayRemote / Polling Lingo" 로 등재했으나 이는 오기였다. PodEmu 소스 (`OAPMessenger.java:447-456`) 에서 `0x03` 은 **General Lingo (`Mode=0x00`) 의 current-mode 질의 커맨드** 로 처리된다 — 즉 독립 lingo byte 가 아니라 Mode=0x00 아래 Cmd=0x03 이다. 본 표에서는 그에 따라 `0x03` 행을 제거했고, Mode-switch 흐름 서술 (아래) 에서만 언급한다.
 
 Mode switch 흐름(실제 iPod이 ExtendedInterface로 넘어가는 전형적 트랜지션)은 PodEmu에서 아래와 같이 관찰된다:
 
@@ -129,13 +130,15 @@ PodEmu `OAPMessenger.java:617-797` 의 switch(cmd) 분기를 따라 정리:
 
 | Command (16-bit bitmap) | 동작 | PodEmu 핸들러 line |
 |-------------------------|------|---------------------|
-| `0x0001` | Play / Pause toggle | L620-640 (`SIMPLE_MODE IN - play` 로그 출력) |
+| `0x0001` | Play (press 이벤트) | L620-640 (`SIMPLE_MODE IN - play` 로그 출력; PodEmu 는 Play 단독으로만 처리하며 Pause toggle 은 별도 커맨드) |
 | `0x0002` | (미사용 또는 Volume Up in some docs) | — |
 | `0x0008` | Skip Next | L641-650 |
 | `0x0010` | Skip Previous | L651-672 |
 | `0x0080` | Stop | L673-677 |
 | `0x0000` | All-buttons-released (press 해제 통지) | L678-695 |
 | multi-bit set | 동시에 여러 버튼 — 드문 경우 | L696+ 에 추가 play/pause/shuffle/repeat toggling 처리. |
+
+> 정정 (factual correction 2026-04-19): 이전 판본에는 `0x0001` 을 "Play / Pause toggle" 로 기재했으나 PodEmu 소스 (`OAPMessenger.java:620-640`) 에서는 **Play 단독** 으로만 처리된다. Pause/toggle 동작은 multi-bit set 행이 가리키는 후속 case (L696+) 의 별도 커맨드에서 이뤄지므로, `0x0001` 단일 비트는 순수 Play press event 로 이해해야 한다.
 
 Wire-level 바이트로 "Play" 한 번:
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=bt2iap — iPod userspace iAP session handler (oandrew/ipod)
+Documentation=https://github.com/oandrew/ipod
+After=ipod-gadget.service
+Requires=ipod-gadget.service
+ConditionPathExists=/dev/iap0
+ConditionPathExists=/opt/bt2iap/vendor/ipod/ipod
+
+[Service]
+Type=simple
+ExecStart=/opt/bt2iap/vendor/ipod/ipod -d serve /dev/iap0
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -47,22 +47,37 @@ bt2iap/
 sudo git clone https://github.com/twinn1013/bt2iap /opt/bt2iap
 cd /opt/bt2iap
 
-# 2. Run bootstrap (installs deps, builds modules, enables service)
+# 2. Run bootstrap (installs deps, builds modules, enables services)
 sudo ./scripts/bootstrap.sh
 
 # 3. Reboot
 sudo reboot
 
 # 4. After reboot, verify
-sudo ./scripts/load-gadget.sh  # or: systemctl status ipod-gadget
+sudo ./scripts/load-gadget.sh                           # T1 gadget load (manual sanity)
+systemctl is-active ipod-gadget.service ipod-session.service
 ```
 
-The bootstrap script handles: `apt` dependencies (`build-essential`, `raspberrypi-kernel-headers`, `golang`, `bluez`, `bluez-tools`, `bluealsa`), cloning and building `oandrew/ipod-gadget`, building the `oandrew/ipod` Go client, and enabling the `ipod-gadget` systemd service.
+The bootstrap script handles: `apt` dependencies (`build-essential`, `raspberrypi-kernel-headers`, `golang`, `bluez`, `bluez-tools`, `bluealsa`), cloning and building `oandrew/ipod-gadget`, building the `oandrew/ipod` Go client, installing **both** the `ipod-gadget` kernel-loader unit and the `ipod-session` userspace iAP handler unit (the Go client is what actually activates the iAP session by opening `/dev/iap0`), and enabling them via `systemctl enable --now`.
 
 Boot patches (`boot/config.txt.patch`, `boot/cmdline.txt.patch`) must be applied before reboot to enable `dwc2` gadget mode:
 
-- `dtoverlay=dwc2` in `/boot/config.txt`
-- `modules-load=dwc2` appended after `rootwait` in `/boot/cmdline.txt`
+- `dtoverlay=dwc2` in `/boot/firmware/config.txt` (Bookworm; pre-Bookworm uses `/boot/config.txt`)
+- `modules-load=dwc2` appended after `rootwait` in `/boot/firmware/cmdline.txt` (Bookworm; pre-Bookworm uses `/boot/cmdline.txt`)
+
+`bootstrap.sh` auto-detects whether the boot directory is `/boot/firmware/` (Bookworm, current Pi OS) or `/boot/` (Bullseye and older) and patches whichever pair exists, failing loudly if neither is present.
+
+### Persisting a working PRODUCT_ID
+
+If `scripts/product-id-loop.sh` finds a `product_id` that the Outlander head unit accepts, persist it across reboots by writing it into `/etc/default/bt2iap`:
+
+```bash
+# Example after the loop lands on 0x1261:
+sudo sed -i 's/^#\?PRODUCT_ID=.*/PRODUCT_ID=0x1261/' /etc/default/bt2iap
+sudo systemctl restart ipod-gadget.service
+```
+
+`systemd/ipod-gadget.service` reads this file via `EnvironmentFile=-/etc/default/bt2iap` (the `-` prefix makes it optional — if the file is absent, the module's built-in default `product_id` is used).
 
 ## T1 verify
 
@@ -83,11 +98,19 @@ When the Pi is tethered to a PC (not the car), it should enumerate as "Apple iPo
 
 ## T2 install (on Pi)
 
-These steps assume T1 bootstrap is complete (modules built, `ipod-gadget.service` enabled).
+`scripts/bootstrap.sh` now handles T2 installation end-to-end. A second run after T1 is unnecessary — the same `sudo ./scripts/bootstrap.sh` invocation also installs the T2 artifacts (BlueZ patch, BlueALSA override, `asound.conf`, `audio-bridge`/`audio-loopback`/`pair-agent`/`ipod-session` services, `modules-load.d/bt2iap.conf`), reloads systemd, and enables every service `--now`.
+
+Post-install, verify the audio chain:
 
 ```bash
-# 1. Apply BlueZ config patch (idempotent: only appends if sentinel absent).
-#    Use the pure-INI payload, NOT the Markdown .patch documentation file.
+sudo /opt/bt2iap/scripts/verify-audio.sh
+```
+
+Manual copy reference (for inspection / partial redeployment only — bootstrap handles all of this automatically):
+
+```bash
+# BlueZ config patch (idempotent: only appends if sentinel absent).
+# Use the pure-INI payload, NOT the Markdown .patch documentation file.
 sudo bash -c '
   block=bluetooth/main.conf.patch.block
   target=/etc/bluetooth/main.conf
@@ -96,31 +119,28 @@ sudo bash -c '
   fi
 '
 
-# 2. Install BlueALSA service drop-in
-sudo mkdir -p /etc/systemd/system/bluealsa.service.d
-sudo cp systemd/bluealsa.service.d/override.conf \
+# BlueALSA service drop-in
+sudo install -D -m 0644 systemd/bluealsa.service.d/override.conf \
         /etc/systemd/system/bluealsa.service.d/override.conf
 
-# 3. Install ALSA routing config
-sudo cp alsa/asound.conf /etc/asound.conf
+# ALSA routing config
+sudo install -D -m 0644 alsa/asound.conf /etc/asound.conf
 
-# 4. Install audio bridge script and service
-sudo cp scripts/audio-bridge.sh /opt/bt2iap/scripts/audio-bridge.sh
-sudo chmod +x /opt/bt2iap/scripts/audio-bridge.sh
-sudo cp systemd/audio-bridge.service /etc/systemd/system/audio-bridge.service
+# modules-load.d for snd-aloop + libcomposite
+sudo install -D -m 0644 modules-load.d/bt2iap.conf /etc/modules-load.d/bt2iap.conf
 
-# 5. Install pairing agent and its systemd unit
-sudo cp bluetooth/pair-agent.sh /opt/bt2iap/bluetooth/pair-agent.sh
-sudo chmod +x /opt/bt2iap/bluetooth/pair-agent.sh
-sudo cp systemd/pair-agent.service /etc/systemd/system/pair-agent.service
+# T2 systemd units (audio-bridge = 1st leg, audio-loopback = 2nd leg)
+sudo install -m 0644 systemd/audio-bridge.service /etc/systemd/system/audio-bridge.service
+sudo install -m 0644 systemd/audio-loopback.service /etc/systemd/system/audio-loopback.service
+sudo install -m 0644 systemd/pair-agent.service /etc/systemd/system/pair-agent.service
+sudo install -m 0644 systemd/ipod-session.service /etc/systemd/system/ipod-session.service
 
-# 6. Enable and start services
 sudo systemctl daemon-reload
-sudo systemctl enable --now bluealsa.service audio-bridge.service pair-agent.service
-
-# 7. Verify audio path
-sudo /opt/bt2iap/scripts/verify-audio.sh
+sudo systemctl enable --now bluealsa.service audio-bridge.service \
+    audio-loopback.service pair-agent.service ipod-session.service
 ```
+
+**Why the second bridge (`audio-loopback.service`) matters:** `asound.conf` wires `default` PCM → `aloop_playback` (loopback write side). Without `alsaloop` reading the capture side and writing to `iPodUSB`, audio literally dead-ends inside the kernel loopback buffer. Prior reviews flagged this as C1 (critical). The unit orders itself via `Requires=audio-bridge.service` + `After=audio-bridge.service`.
 
 ## T2 verify
 

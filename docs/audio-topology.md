@@ -4,6 +4,11 @@
 
 스마트폰이 블루투스 A2DP로 음악을 Pi에 전송하면, BlueALSA가 이를 받아 ALSA PCM 스트림으로 변환하고, ALSA loopback 카드(snd-aloop)를 거쳐 g_ipod_audio 커널 모듈이 노출하는 iPodUSB ALSA 카드로 라우팅된다. iPodUSB 카드는 USB iAP 프로토콜을 통해 Outlander MMCS 헤드유닛에 오디오를 전달하며, 헤드유닛은 Pi를 iPod으로 인식한다.
 
+체인은 두 단계 브릿지로 구성된다:
+
+1. **1st leg (`audio-bridge.service`)** — `bluealsa-aplay` 가 A2DP 소스를 읽어 ALSA default PCM (= `aloop_playback` = `hw:Loopback,0,0`) 에 쓴다.
+2. **2nd leg (`audio-loopback.service`)** — `alsaloop -C aloop_capture -P ipod_sink` 가 loopback 의 capture side (`hw:Loopback,1,0`) 를 읽어 `iPodUSB` 카드 (`hw:iPodUSB,0`) 에 쓴다. **이 두 번째 브릿지가 빠지면 폰 오디오가 loopback 안에서 데드엔드가 되어 차에서 아무 소리도 안 난다** — 과거 리뷰에서 잡힌 크리티컬 이슈 (C1).
+
 ---
 
 ## 2. End-to-end Diagram (ASCII)
@@ -159,8 +164,10 @@ T2에서 생성하는 artifact 전체 목록이다.
 | `bluetooth/pair-agent.sh` | 입력 없이 페어링을 수립하는 agent 래퍼 | `/opt/bt2iap/bluetooth/` (systemd unit 또는 직접 실행) |
 | `systemd/bluealsa.service.d/override.conf` | BlueALSA를 A2DP sink 프로파일로 제한 | `/etc/systemd/system/bluealsa.service.d/` |
 | `alsa/asound.conf` | ALSA 라우팅 (A2DP → loopback → iPodUSB) | `/etc/asound.conf` |
-| `scripts/audio-bridge.sh` | bluealsa-aplay 루프 러너 | `/opt/bt2iap/scripts/` |
+| `scripts/audio-bridge.sh` | **1st-leg bridge** — bluealsa-aplay 루프 러너 (A2DP → aloop_playback) | `/opt/bt2iap/scripts/` |
 | `systemd/audio-bridge.service` | audio-bridge.sh의 systemd 래퍼 | `/etc/systemd/system/` |
+| `systemd/audio-loopback.service` | **2nd-leg bridge** — `alsaloop -C aloop_capture -P ipod_sink` 로 loopback capture 를 iPodUSB 로 포워드. `Requires=audio-bridge.service` + `After=audio-bridge.service` 로 순서 강제. | `/etc/systemd/system/` |
+| `modules-load.d/bt2iap.conf` | 부팅 시 `snd-aloop` + `libcomposite` 선로드 — audio-bridge.service 시작 전에 ALSA 카드 열거 완료 보장. | `/etc/modules-load.d/` |
 | `scripts/verify-audio.sh` | T2 오디오 경로 헬스체크 스크립트 | `/opt/bt2iap/scripts/` |
 
 ---

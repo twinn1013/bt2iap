@@ -176,6 +176,32 @@ journalctl -u ipod-gadget.service --no-pager | tail -30
 
 ---
 
+### Step 7b — ipod-session.service 활성 확인 (userspace iAP 세션)
+
+`ipod-gadget.service` 가 커널 모듈을 올리고 `/dev/iap0` 을 만들었다면, 이제 **userspace iAP 세션 핸들러** (`oandrew/ipod` Go 클라이언트) 가 `/dev/iap0` 을 열고 iAP 메시지를 주고받아야 한다. upstream 설명상 디바이스가 실제로 "iPod 세션" 으로 활성화되는 것은 `/dev/iap0` 이 userspace 에 의해 open 되었을 때이므로, 이 서비스가 돌지 않으면 헤드유닛이 디바이스를 보더라도 재생까지 이어지지 않는다.
+
+```bash
+systemctl status ipod-session.service --no-pager
+journalctl -u ipod-session.service --no-pager | tail -30
+```
+
+**Expected output**
+
+```
+● ipod-session.service - bt2iap — iPod userspace iAP session handler (oandrew/ipod)
+     Loaded: loaded (/etc/systemd/system/ipod-session.service; enabled; ...)
+     Active: active (running) since ...
+```
+
+ExecStart 는 `/opt/bt2iap/vendor/ipod/ipod -d serve /dev/iap0` 형태 (upstream `oandrew/ipod` README 가 제시한 커맨드 그대로; `-d` 는 debug 로깅, `serve` 는 /dev/iap0 핸들러 서브커맨드).
+
+**Troubleshooting:**
+- `Active: failed` + `ConditionPathExists=/dev/iap0 was not met` → Step 5 가 통과하지 못했다. Step 5 로 돌아가 `/dev/iap0` 생성부터 재확인.
+- `Active: failed` + `ConditionPathExists=/opt/bt2iap/vendor/ipod/ipod was not met` → `bootstrap.sh` 의 `ipod client: go build` 단계가 실패했다. 수동으로 `cd /opt/bt2iap/vendor/ipod && go build -o ./ipod ./cmd/ipod` 재실행.
+- `Active: activating (start)` 에서 멈춰 있다 → Go 클라이언트가 첫 바이트 교환 시 블록된 상태. `journalctl -u ipod-session.service -f` 로 라이브 로그 확인.
+
+---
+
 ### Step 8 — 실패 시 분기점 (auth error 계열)
 
 Step 5-7 진행 중 dmesg에 **"Authentication failed"**, **"Host rejected iPod"**, **"iAP auth error"** 류 메시지가 출현하면:

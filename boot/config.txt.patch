@@ -1,6 +1,13 @@
 # boot/config.txt.patch
 #
-# Lines to APPEND to /boot/config.txt on the Pi.
+# Path note (Raspberry Pi OS):
+#   - Bookworm (current Pi OS, kernel 6.12+):  /boot/firmware/config.txt
+#   - Pre-Bookworm (Bullseye and older):       /boot/config.txt
+#   bootstrap.sh auto-detects via detect_boot_dir() — it checks
+#   /boot/firmware/config.txt first, then /boot/config.txt, and fails
+#   loudly if neither exists.
+#
+# Lines to APPEND to (whichever) config.txt on the Pi.
 # bootstrap.sh detects the sentinel "# --- begin bt2iap ---" before appending
 # so this block is safe to apply multiple times (idempotent).
 #

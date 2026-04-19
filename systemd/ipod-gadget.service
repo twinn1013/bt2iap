@@ -7,7 +7,10 @@ ConditionPathExists=/opt/bt2iap/scripts/load-gadget.sh
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/opt/bt2iap/scripts/load-gadget.sh
+# Optional environment file. Leading '-' means "do not fail if missing".
+# PRODUCT_ID (if set) is expanded into --product-id=<hex> below.
+EnvironmentFile=-/etc/default/bt2iap
+ExecStart=/bin/sh -c 'exec /opt/bt2iap/scripts/load-gadget.sh ${PRODUCT_ID:+--product-id=$PRODUCT_ID}'
 ExecStop=/usr/bin/env bash -c 'rmmod g_ipod_gadget g_ipod_hid g_ipod_audio 2>/dev/null || true'
 StandardOutput=journal
 StandardError=journal

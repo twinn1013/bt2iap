@@ -30,6 +30,21 @@ require_root() {
   fi
 }
 
+# Locate the boot configuration directory.
+# Bookworm (current Pi OS) uses /boot/firmware/{config,cmdline}.txt;
+# pre-Bookworm uses /boot/{config,cmdline}.txt. Fail loudly if neither
+# exists so bootstrap does not silently skip the overlay/cmdline patch.
+detect_boot_dir() {
+  if [[ -f /boot/firmware/config.txt ]]; then
+    printf '/boot/firmware'
+  elif [[ -f /boot/config.txt ]]; then
+    printf '/boot'
+  else
+    log "ERROR: cannot locate boot config (neither /boot/firmware/config.txt nor /boot/config.txt exists)"
+    exit 1
+  fi
+}
+
 ## === Constants ===
 
 BT2IAP_ROOT="/opt/bt2iap"
@@ -39,8 +54,9 @@ IPOD_CLIENT_DIR="${VENDOR_DIR}/ipod"
 IPOD_GADGET_REPO="https://github.com/oandrew/ipod-gadget"
 IPOD_CLIENT_REPO="https://github.com/oandrew/ipod"
 
-BOOT_CONFIG="/boot/config.txt"
-BOOT_CMDLINE="/boot/cmdline.txt"
+BOOT_DIR="$(detect_boot_dir)"
+BOOT_CONFIG="${BOOT_DIR}/config.txt"
+BOOT_CMDLINE="${BOOT_DIR}/cmdline.txt"
 BOOT_CONFIG_PATCH="${BT2IAP_ROOT}/boot/config.txt.patch"
 
 SYSTEMD_UNIT_SRC="${BT2IAP_ROOT}/systemd/ipod-gadget.service"
@@ -169,22 +185,160 @@ if [[ -f "${BOOT_CMDLINE}" ]]; then
     # Preserve original as backup; insert once after the first 'rootwait '.
     cp -a "${BOOT_CMDLINE}" "${BOOT_CMDLINE}.bt2iap.bak"
     sed -i 's/\brootwait\b/rootwait modules-load=dwc2/' "${BOOT_CMDLINE}"
+    # Verify the patch landed — e.g. if the file has no 'rootwait' token the
+    # sed above is a silent no-op and the module would never load at boot.
+    if ! grep -q 'modules-load=dwc2' "${BOOT_CMDLINE}"; then
+      log "ERROR: cmdline.txt patch did not apply — manual intervention required"
+      exit 1
+    fi
   fi
 else
   log "WARN: ${BOOT_CMDLINE} not found, skipping cmdline.txt patch"
 fi
 
-## === systemd unit ===
+## === systemd unit (T1 gadget loader) ===
 
 if [[ -f "${SYSTEMD_UNIT_SRC}" ]]; then
   log "installing ${SYSTEMD_UNIT_DST}"
   install -m 0644 "${SYSTEMD_UNIT_SRC}" "${SYSTEMD_UNIT_DST}"
-  log "systemctl daemon-reload"
-  systemctl daemon-reload
-  log "systemctl enable ipod-gadget.service"
-  systemctl enable ipod-gadget.service
 else
   log "WARN: ${SYSTEMD_UNIT_SRC} not found, skipping systemd install"
+fi
+
+## === /etc/default/bt2iap (optional PRODUCT_ID persistence) ===
+# Only install the example if a live config is not already in place; we must
+# not overwrite operator-tuned /etc/default/bt2iap on re-runs.
+
+BT2IAP_DEFAULTS_SRC="${BT2IAP_ROOT}/etc/default/bt2iap.example"
+BT2IAP_DEFAULTS_DST="/etc/default/bt2iap"
+if [[ -f "${BT2IAP_DEFAULTS_SRC}" ]]; then
+  if [[ -f "${BT2IAP_DEFAULTS_DST}" ]]; then
+    log "${BT2IAP_DEFAULTS_DST}: already present, skip (preserves operator PRODUCT_ID)"
+  else
+    log "installing ${BT2IAP_DEFAULTS_DST}"
+    install -D -m 0644 "${BT2IAP_DEFAULTS_SRC}" "${BT2IAP_DEFAULTS_DST}"
+  fi
+else
+  log "WARN: ${BT2IAP_DEFAULTS_SRC} not found, skipping /etc/default/bt2iap"
+fi
+
+## === modules-load.d (boot-time kernel module hint) ===
+# snd-aloop must be available before audio-bridge.service runs; libcomposite
+# must be present before the ipod-gadget modules insmod. Listing both here
+# avoids a race between service-manager startup and module availability.
+
+MODULES_LOAD_SRC="${BT2IAP_ROOT}/modules-load.d/bt2iap.conf"
+MODULES_LOAD_DST="/etc/modules-load.d/bt2iap.conf"
+if [[ -f "${MODULES_LOAD_SRC}" ]]; then
+  log "installing ${MODULES_LOAD_DST}"
+  install -D -m 0644 "${MODULES_LOAD_SRC}" "${MODULES_LOAD_DST}"
+else
+  log "WARN: ${MODULES_LOAD_SRC} not found, skipping modules-load.d"
+fi
+
+## === T2 artifacts install ===
+# Idempotent: all operations are install(1) with mode bits, sentinel-guarded
+# appends, and short-circuits when files already exist. Missing source files
+# emit WARN and skip — bootstrap.sh never aborts the whole run for a missing
+# T2 file because T1 on its own is still useful as a standalone gadget boot.
+
+## --- BlueZ main.conf patch (sentinel-guarded append) ---
+BLUEZ_CONF="/etc/bluetooth/main.conf"
+BLUEZ_BLOCK_SRC="${BT2IAP_ROOT}/bluetooth/main.conf.patch.block"
+if [[ -f "${BLUEZ_BLOCK_SRC}" ]]; then
+  if [[ -f "${BLUEZ_CONF}" ]]; then
+    if grep -qF "${SENTINEL_BEGIN}" "${BLUEZ_CONF}" 2>/dev/null; then
+      log "${BLUEZ_CONF}: bt2iap block already present, skip"
+    else
+      log "${BLUEZ_CONF}: appending bt2iap block"
+      cat "${BLUEZ_BLOCK_SRC}" >> "${BLUEZ_CONF}"
+    fi
+  else
+    log "WARN: ${BLUEZ_CONF} not found (bluez not installed?), skipping"
+  fi
+else
+  log "WARN: ${BLUEZ_BLOCK_SRC} not found, skipping BlueZ patch"
+fi
+
+## --- BlueALSA drop-in override ---
+BLUEALSA_OVERRIDE_SRC="${BT2IAP_ROOT}/systemd/bluealsa.service.d/override.conf"
+BLUEALSA_OVERRIDE_DST="/etc/systemd/system/bluealsa.service.d/override.conf"
+if [[ -f "${BLUEALSA_OVERRIDE_SRC}" ]]; then
+  log "installing ${BLUEALSA_OVERRIDE_DST}"
+  install -D -m 0644 "${BLUEALSA_OVERRIDE_SRC}" "${BLUEALSA_OVERRIDE_DST}"
+else
+  log "WARN: ${BLUEALSA_OVERRIDE_SRC} not found, skipping bluealsa override"
+fi
+
+## --- ALSA routing config ---
+ASOUND_SRC="${BT2IAP_ROOT}/alsa/asound.conf"
+ASOUND_DST="/etc/asound.conf"
+if [[ -f "${ASOUND_SRC}" ]]; then
+  log "installing ${ASOUND_DST}"
+  install -D -m 0644 "${ASOUND_SRC}" "${ASOUND_DST}"
+else
+  log "WARN: ${ASOUND_SRC} not found, skipping asound.conf"
+fi
+
+## --- T2 scripts into /opt/bt2iap/scripts (installed here for consistency) ---
+for script_name in audio-bridge.sh verify-audio.sh collect-diagnostics.sh; do
+  src="${BT2IAP_ROOT}/scripts/${script_name}"
+  dst="${BT2IAP_ROOT}/scripts/${script_name}"
+  if [[ -f "${src}" ]]; then
+    if [[ "${src}" != "${dst}" ]]; then
+      log "installing ${dst}"
+      install -m 0755 "${src}" "${dst}"
+    else
+      # Source == destination (repo lives at /opt/bt2iap); just ensure mode.
+      chmod 0755 "${dst}"
+    fi
+  fi
+done
+
+## --- pair-agent.sh into /opt/bt2iap/bluetooth ---
+PAIR_AGENT_SRC="${BT2IAP_ROOT}/bluetooth/pair-agent.sh"
+PAIR_AGENT_DST="${BT2IAP_ROOT}/bluetooth/pair-agent.sh"
+if [[ -f "${PAIR_AGENT_SRC}" ]]; then
+  chmod 0755 "${PAIR_AGENT_DST}"
+fi
+
+## --- T2 systemd units ---
+for unit_name in audio-bridge.service pair-agent.service audio-loopback.service ipod-session.service; do
+  src="${BT2IAP_ROOT}/systemd/${unit_name}"
+  dst="/etc/systemd/system/${unit_name}"
+  if [[ -f "${src}" ]]; then
+    log "installing ${dst}"
+    install -m 0644 "${src}" "${dst}"
+  else
+    log "WARN: ${src} not found, skipping ${unit_name}"
+  fi
+done
+
+## === systemd reload + enable ===
+
+log "systemctl daemon-reload"
+systemctl daemon-reload
+
+# Enable services idempotently. Services not installed above are skipped
+# gracefully by listing them conditionally.
+ENABLE_UNITS=()
+ENABLE_UNITS+=("ipod-gadget.service")
+if [[ -f "/etc/systemd/system/ipod-session.service" ]]; then
+  ENABLE_UNITS+=("ipod-session.service")
+fi
+if [[ -f "${BLUEALSA_OVERRIDE_DST}" ]]; then
+  ENABLE_UNITS+=("bluealsa.service")
+fi
+for unit_name in audio-bridge.service audio-loopback.service pair-agent.service; do
+  if [[ -f "/etc/systemd/system/${unit_name}" ]]; then
+    ENABLE_UNITS+=("${unit_name}")
+  fi
+done
+
+if [[ ${#ENABLE_UNITS[@]} -gt 0 ]]; then
+  log "systemctl enable --now ${ENABLE_UNITS[*]}"
+  systemctl enable --now "${ENABLE_UNITS[@]}" || \
+    log "WARN: one or more services failed to start (check: systemctl --failed)"
 fi
 
 ## === Summary ===

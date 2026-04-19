@@ -38,21 +38,30 @@ check-t1: ## T1 quality gates: shellcheck, systemd headers, boot patches, doc pr
 	fi
 	@echo "    PASS: shellcheck"
 	@echo ""
-	@echo "==> [check-t1] systemd unit header check"
-	@unit=systemd/ipod-gadget.service; \
-	if [ ! -f "$$unit" ]; then \
-		echo "ERROR: $$unit not found."; \
-		exit 1; \
-	fi; \
-	fail=0; \
-	for section in '\[Unit\]' '\[Service\]' '\[Install\]'; do \
-		if ! grep -qE "$$section" "$$unit"; then \
-			echo "ERROR: $$unit is missing section: $$section"; \
+	@echo "==> [check-t1] systemd unit header check (ipod-gadget + ipod-session)"
+	@fail=0; \
+	for unit in systemd/ipod-gadget.service systemd/ipod-session.service; do \
+		if [ ! -f "$$unit" ]; then \
+			echo "ERROR: $$unit not found."; \
 			fail=1; \
+			continue; \
 		fi; \
+		for section in '\[Unit\]' '\[Service\]' '\[Install\]'; do \
+			if ! grep -qE "$$section" "$$unit"; then \
+				echo "ERROR: $$unit is missing section: $$section"; \
+				fail=1; \
+			fi; \
+		done; \
 	done; \
 	if [ $$fail -ne 0 ]; then exit 1; fi
 	@echo "    PASS: systemd unit headers ([Unit] [Service] [Install])"
+	@echo ""
+	@echo "==> [check-t1] /etc/default/bt2iap.example presence"
+	@if [ ! -f etc/default/bt2iap.example ]; then \
+		echo "ERROR: etc/default/bt2iap.example not found (H5 PRODUCT_ID persistence artifact)"; \
+		exit 1; \
+	fi
+	@echo "    PASS: etc/default/bt2iap.example exists"
 	@echo ""
 	@echo "==> [check-t1] boot patch content check"
 	@cfg=boot/config.txt.patch; \
@@ -112,21 +121,34 @@ check-t2: ## T2 quality gates: shellcheck (all scripts), systemd headers, ALSA c
 	fi
 	@echo "    PASS: shellcheck"
 	@echo ""
-	@echo "==> [check-t2] systemd unit header check"
-	@unit=systemd/audio-bridge.service; \
-	if [ ! -f "$$unit" ]; then \
-		echo "ERROR: $$unit not found."; \
-		exit 1; \
-	fi; \
-	fail=0; \
-	for section in '\[Unit\]' '\[Service\]' '\[Install\]'; do \
-		if ! grep -qE "$$section" "$$unit"; then \
-			echo "ERROR: $$unit is missing section: $$section"; \
+	@echo "==> [check-t2] systemd unit header check (audio-bridge + audio-loopback)"
+	@fail=0; \
+	for unit in systemd/audio-bridge.service systemd/audio-loopback.service; do \
+		if [ ! -f "$$unit" ]; then \
+			echo "ERROR: $$unit not found."; \
 			fail=1; \
+			continue; \
 		fi; \
+		for section in '\[Unit\]' '\[Service\]' '\[Install\]'; do \
+			if ! grep -qE "$$section" "$$unit"; then \
+				echo "ERROR: $$unit is missing section: $$section"; \
+				fail=1; \
+			fi; \
+		done; \
 	done; \
 	if [ $$fail -ne 0 ]; then exit 1; fi
-	@echo "    PASS: systemd/audio-bridge.service headers ([Unit] [Service] [Install])"
+	@echo "    PASS: systemd/{audio-bridge,audio-loopback}.service headers ([Unit] [Service] [Install])"
+	@echo ""
+	@echo "==> [check-t2] modules-load.d/bt2iap.conf presence"
+	@if [ ! -f modules-load.d/bt2iap.conf ]; then \
+		echo "ERROR: modules-load.d/bt2iap.conf not found (H6 snd-aloop boot-time preload)"; \
+		exit 1; \
+	fi; \
+	if ! grep -q 'snd-aloop' modules-load.d/bt2iap.conf; then \
+		echo "ERROR: modules-load.d/bt2iap.conf does not list snd-aloop"; \
+		exit 1; \
+	fi
+	@echo "    PASS: modules-load.d/bt2iap.conf exists and contains snd-aloop"
 	@override=systemd/bluealsa.service.d/override.conf; \
 	if [ ! -f "$$override" ]; then \
 		echo "ERROR: $$override not found."; \

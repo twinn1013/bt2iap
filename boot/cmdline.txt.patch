@@ -1,8 +1,16 @@
 # boot/cmdline.txt.patch
 #
-# /boot/cmdline.txt is a SINGLE-LINE file — appending would break it.
-# bootstrap.sh must INSERT the token "modules-load=dwc2" immediately after
-# "rootwait" on that one line, then write the file back.
+# Path note (Raspberry Pi OS):
+#   - Bookworm (current Pi OS, kernel 6.12+):  /boot/firmware/cmdline.txt
+#   - Pre-Bookworm (Bullseye and older):       /boot/cmdline.txt
+#   bootstrap.sh auto-detects via detect_boot_dir() — it checks
+#   /boot/firmware/config.txt first, then /boot/config.txt, and fails
+#   loudly if neither exists.
+#
+# /boot/cmdline.txt (or /boot/firmware/cmdline.txt) is a SINGLE-LINE file —
+# appending would break it. bootstrap.sh must INSERT the token
+# "modules-load=dwc2" immediately after "rootwait" on that one line, then
+# write the file back.
 #
 # Purpose: instruct the kernel to load the dwc2 USB-gadget driver during
 # early boot, before any service manager starts. This is required for the

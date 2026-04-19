@@ -6,3 +6,7 @@
 
 # macOS
 .DS_Store
+.omx/
+
+# claude-mem / session-scoped agent context
+AGENTS.md

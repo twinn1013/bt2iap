@@ -9,10 +9,11 @@
 #   diagnostic line.
 #
 # Candidate sources (in order):
-#   1. /opt/bt2iap/docs/research-ipod-gadget.md — parse the first column
-#      of any markdown table cell matching ^\s*\|?\s*0x[0-9A-Fa-f]{4}\s*\|
-#   2. Fallback hard-coded list:
-#      0x1297 0x1267 0x129a 0x129c 0x1261 0x126a 0x1260
+#   1. /opt/bt2iap/docs/research-ipod-gadget.md — parse every markdown
+#      backticked token of the form `0xHHHH` (Tier A first-occurrence order
+#      is preserved via awk dedupe).
+#   2. Fallback hard-coded list (Tier A order from research doc §2.2):
+#      0x1261 0x1260 0x1262 0x1263 0x1265 0x1266 0x1267
 #
 # Modes:
 #   Default: dry-run — prints "[DRY-RUN] Tried $id — manual inspection
@@ -49,13 +50,13 @@ LOAD_GADGET="/opt/bt2iap/scripts/load-gadget.sh"
 DEEP_DIVE_DOC="/opt/bt2iap/docs/iap-auth-deep-dive.md"
 
 FALLBACK_IDS=(
-  "0x1297"
-  "0x1267"
-  "0x129a"
-  "0x129c"
   "0x1261"
-  "0x126a"
   "0x1260"
+  "0x1262"
+  "0x1263"
+  "0x1265"
+  "0x1266"
+  "0x1267"
 )
 
 INTERACTIVE="${BT2IAP_INTERACTIVE:-0}"
@@ -68,13 +69,27 @@ INTERACTIVE="${BT2IAP_INTERACTIVE:-0}"
 parse_candidates() {
   local ids=()
   if [[ -f "${RESEARCH_DOC}" ]]; then
-    # Match table rows: leading '|', then whitespace, then 0xXXXX in col 1.
+    # Prefer §2.2 Tier-ordered list (lines starting with "1. **Tier" ...
+    # "4. **Tier"). Tier lines list candidates in priority order (A->B->C->D),
+    # which is exactly what we want the loop to try.
+    # Fall back to §2.1 table (hex-ordered) if Tier lines yield nothing.
     while IFS= read -r line; do
       ids+=("${line}")
     done < <(
-      grep -Eo '^[[:space:]]*\|[[:space:]]*0x[0-9A-Fa-f]{4}' "${RESEARCH_DOC}" 2>/dev/null \
-        | sed -E 's/^[[:space:]]*\|[[:space:]]*//' \
-        | awk '{print $1}'
+      {
+        # Tier lines first (explicit priority order).
+        # shellcheck disable=SC2016  # backticks are literal markdown delimiters
+        grep -E '^[0-9]+\. \*\*Tier' "${RESEARCH_DOC}" 2>/dev/null \
+          | grep -oE '`0x[0-9a-fA-F]+`' \
+          || true
+        # Then §2.1 table rows (any remaining IDs in doc order).
+        # shellcheck disable=SC2016  # backticks are literal markdown delimiters
+        grep -oE '`0x[0-9a-fA-F]+`' "${RESEARCH_DOC}" 2>/dev/null \
+          || true
+      } \
+        | tr -d '`' \
+        | grep -viE '^0x05ac$' \
+        | awk '!seen[$0]++'
     )
   fi
 
@@ -146,7 +161,8 @@ done
 
 if [[ -n "${winner}" ]]; then
   log "SUCCESS: MMCS accepted product_id=${winner}"
-  log "Persist this id: sudo ${LOAD_GADGET} --product-id=${winner}"
+  log "One-shot reload: sudo ${LOAD_GADGET} --product-id=${winner}"
+  echo "To persist: sudo sed -i 's/^#\\?PRODUCT_ID=.*/PRODUCT_ID=${winner}/' /etc/default/bt2iap && sudo systemctl restart ipod-gadget.service"
   exit 0
 fi
 

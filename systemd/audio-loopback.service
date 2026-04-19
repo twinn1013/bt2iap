@@ -1,0 +1,24 @@
+[Unit]
+Description=bt2iap — ALSA loopback second-leg bridge (aloop_capture -> ipod_sink)
+Documentation=https://github.com/twinn1013/bt2iap
+After=audio-bridge.service
+Requires=audio-bridge.service
+ConditionPathExists=/etc/asound.conf
+
+[Service]
+Type=simple
+# alsaloop:
+#   -C aloop_capture   read PCM from hw:Loopback,1,0 (the capture side)
+#   -P ipod_sink       write PCM to hw:iPodUSB,0 (the g_ipod_audio card)
+#   -t 50000           target latency in microseconds (50 ms)
+#   --sync=samplerate  resample drift correction; the two ALSA endpoints
+#                      have independent clocks (snd-aloop virtual vs. USB
+#                      gadget) so we must resync.
+ExecStart=/usr/bin/alsaloop -C aloop_capture -P ipod_sink -t 50000 --sync=samplerate
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

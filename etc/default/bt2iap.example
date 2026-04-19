@@ -1,0 +1,4 @@
+# bt2iap runtime configuration (copy to /etc/default/bt2iap)
+# PRODUCT_ID: hex string (e.g., 0x1297). If set, load-gadget.sh passes it to g_ipod_gadget.
+# If unset or commented, the module's built-in default is used.
+#PRODUCT_ID=0x1297
