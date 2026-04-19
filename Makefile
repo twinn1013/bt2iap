@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 # Self-documenting help: targets with ## comments are listed.
-.PHONY: help check check-t1 check-t2 check-t3 clean
+.PHONY: help check check-t1 check-t2 check-t3 check-t4 clean
 
 
 # Default target
@@ -13,7 +13,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z0-9_-]+:.*## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
-check: check-t1 check-t2 check-t3 ## Run all Mac-side quality gates (check-t1 then check-t2 then check-t3)
+check: check-t1 check-t2 check-t3 check-t4 ## Run all Mac-side quality gates (check-t1 then check-t2 then check-t3 then check-t4)
 
 check-t1: ## T1 quality gates: shellcheck, systemd headers, boot patches, doc presence
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
@@ -260,6 +260,60 @@ check-t3: ## T3 quality gates: shellcheck (scripts/), T3 docs presence, cross-re
 	@echo "    PASS: scripts/collect-diagnostics.sh exists and is executable"
 	@echo ""
 	@echo "==> check-t3 PASSED"
+
+check-t4: ## T4 quality gates: shellcheck (scripts/), T4 docs presence, content sanity
+	@if ! command -v shellcheck >/dev/null 2>&1; then \
+		echo "ERROR: shellcheck not found."; \
+		echo "Install:  brew install shellcheck   (macOS)"; \
+		echo "          apt install shellcheck     (Linux/Debian)"; \
+		exit 1; \
+	fi
+	@echo "==> [check-t4] shellcheck on scripts/"
+	@fail=0; \
+	for f in scripts/*.sh; do \
+		[ -f "$$f" ] || continue; \
+		shellcheck -x "$$f" || fail=1; \
+	done; \
+	if [ $$fail -ne 0 ]; then \
+		echo "ERROR: shellcheck found issues in scripts/*.sh"; \
+		exit 1; \
+	fi
+	@echo "    PASS: shellcheck"
+	@echo ""
+	@echo "==> [check-t4] T4 docs presence check"
+	@fail=0; \
+	for doc in docs/iap-messages.md docs/advanced-iap-tools.md; do \
+		if [ ! -f "$$doc" ]; then \
+			echo "ERROR: $$doc not found."; \
+			fail=1; \
+		elif [ ! -s "$$doc" ]; then \
+			echo "ERROR: $$doc exists but is empty."; \
+			fail=1; \
+		else \
+			echo "    PASS: $$doc exists and is non-empty"; \
+		fi; \
+	done; \
+	if [ $$fail -ne 0 ]; then exit 1; fi
+	@echo ""
+	@echo "==> [check-t4] content sanity: iap-messages.md must mention 'iAP' and 'lingo'"
+	@if ! grep -q 'iAP' docs/iap-messages.md; then \
+		echo "ERROR: docs/iap-messages.md does not mention 'iAP'"; \
+		exit 1; \
+	fi; \
+	if ! grep -qi 'lingo' docs/iap-messages.md; then \
+		echo "ERROR: docs/iap-messages.md does not mention 'lingo'"; \
+		exit 1; \
+	fi
+	@echo "    PASS: docs/iap-messages.md contains 'iAP' and 'lingo'"
+	@echo ""
+	@echo "==> [check-t4] content sanity: advanced-iap-tools.md must mention 'usbmon' or 'Saleae'"
+	@if ! grep -qE 'usbmon|Saleae' docs/advanced-iap-tools.md; then \
+		echo "ERROR: docs/advanced-iap-tools.md does not mention 'usbmon' or 'Saleae'"; \
+		exit 1; \
+	fi
+	@echo "    PASS: docs/advanced-iap-tools.md contains at least one capture tool reference"
+	@echo ""
+	@echo "==> check-t4 PASSED"
 
 clean: ## No-op at T1
 	@echo "Nothing to clean at T1."

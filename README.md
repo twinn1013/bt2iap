@@ -14,7 +14,7 @@ The Pi presents itself as an Apple iPod using the `ipod-gadget` kernel module ov
 
 ## Status
 
-Pre-hardware. T1 + T2 complete. T3 (iAP deep recovery runbook) complete. See `.omc/specs/deep-interview-pre-pi-prep.md` for the tiered plan.
+All four tiers (T1 gadget boot, T2 audio path, T3 iAP deep recovery runbook, T4 extension research) complete. Awaiting Pi Zero 2 W hardware.
 
 ## Hardware
 
@@ -33,8 +33,10 @@ bt2iap/
 |-- bluetooth/     # BlueZ config patch and pairing agent script
 |-- alsa/          # ALSA routing config (A2DP sink -> loopback -> iPodUSB)
 |-- docs/          # Research notes, verification checklists, audio topology diagram,
-|                  #   triage matrix (triage.md), iAP auth deep-dive (iap-auth-deep-dive.md)
-|-- Makefile       # Mac-side quality gates (check-t1, check-t2, check-t3)
+|                  #   triage matrix (triage.md), iAP auth deep-dive (iap-auth-deep-dive.md),
+|                  #   iAP message protocol reference (iap-messages.md),
+|                  #   advanced debugging tools catalog (advanced-iap-tools.md)
+|-- Makefile       # Mac-side quality gates (check-t1, check-t2, check-t3, check-t4)
 `-- CLAUDE.md      # Project context for AI assistants
 ```
 
@@ -186,14 +188,22 @@ Use `--no-tar` to leave the directory unpacked for local inspection:
 sudo /opt/bt2iap/scripts/collect-diagnostics.sh --no-tar
 ```
 
+## T4 extension research
+
+Forward-looking notes for when T2 is working and the project wants to add steering-wheel button support, track metadata display, or needs hardware capture tools for deeper protocol analysis. T4 is docs-only — no scripts, no hardware purchases in this tier.
+
+- `docs/iap-messages.md` — iAP message protocol reference: wire format, lingoes, playback and metadata commands. Useful when implementing lingo handlers beyond basic audio playback.
+- `docs/advanced-iap-tools.md` — tool catalog for deeper debugging: USB analyzers (usbmon, Saleae), MFi chip breakout options, alternative fork build environments. Consulted only if T3 escalation paths are exhausted.
+
 ## Developer quality gates (on Mac)
 
 ```bash
 brew install shellcheck make
-make check        # runs check-t1, check-t2, check-t3
+make check        # runs check-t1, check-t2, check-t3, check-t4
 make check-t1     # T1 gates only
 make check-t2     # T2 gates only
 make check-t3     # T3 gates only
+make check-t4     # T4 gates only
 ```
 
 `make check-t1` runs:
@@ -216,6 +226,12 @@ make check-t3     # T3 gates only
 4. FM transmitter rejection context: if `FM transmitter` appears in `docs/triage.md`, it must be within 3 lines of a rejection keyword (`rejected`, `거부`, `명시적`, `policy`, or `금지`)
 5. `scripts/collect-diagnostics.sh` exists and is executable
 
+`make check-t4` runs:
+1. `shellcheck -x` on all files in `scripts/` (inherits any new scripts added since T3)
+2. T4 docs presence check (`docs/iap-messages.md` and `docs/advanced-iap-tools.md` exist and are non-empty)
+3. Content sanity: `docs/iap-messages.md` must mention both `iAP` and `lingo`
+4. Content sanity: `docs/advanced-iap-tools.md` must mention `usbmon` or `Saleae` (at least one capture tool referenced)
+
 ## Failure triage
 
 See `CLAUDE.md` — "Known failure modes" section for triage order and recovery steps.
@@ -234,6 +250,25 @@ Triage priority:
 - [oandrew/ipod-gadget](https://github.com/oandrew/ipod-gadget) — kernel modules (`g_ipod_audio.ko`, `g_ipod_hid.ko`, `g_ipod_gadget.ko`) and Go client; ground truth for iAP gadget behavior
 - [oandrew/ipod](https://github.com/oandrew/ipod) — Go iAP client library
 - [xtensa/PodEmu](https://github.com/xtensa/PodEmu) — 30-pin iPod dock reference; not directly usable over USB-A, consulted for iAP message reference (T4)
+
+## Project status summary
+
+### What's done (pre-hardware)
+
+- T1: gadget boot minimum (scripts, boot patches, systemd unit, docs) — pushed
+- T2: audio path complete (BlueZ, BlueALSA, ALSA loopback, audio-bridge, pair-agent) — pushed (this is the spec acceptance line)
+- T3: iAP deep recovery runbook (triage.md, iap-auth-deep-dive.md, collect-diagnostics.sh) — pushed
+- T4: extension research (iap-messages.md, advanced-iap-tools.md) — pushed
+
+### What needs Pi hardware
+
+- Actually running `sudo ./scripts/bootstrap.sh` on a Raspberry Pi Zero 2 W.
+- Installing in-car, testing pairing with phone, confirming MMCS recognizes the gadget as iPod.
+- Running `scripts/product-id-loop.sh` if the default product_id doesn't work.
+- Running `scripts/verify-audio.sh` post-audio-install.
+- Escalating to `docs/iap-auth-deep-dive.md` stages if auth blocks.
+
+All documentation and automation artifacts are complete. Hardware arrival is the next gate.
 
 ## License
 
