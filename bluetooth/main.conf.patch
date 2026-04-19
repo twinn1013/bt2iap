@@ -1,0 +1,153 @@
+# bt2iap — `/etc/bluetooth/main.conf` patch
+
+This document describes the BlueZ daemon configuration overrides required so the
+Raspberry Pi Zero 2 W can act as a persistently-discoverable A2DP sink that any
+phone can pair to without on-device confirmation (no display / no keypad, car
+install).
+
+Target file on Pi: `/etc/bluetooth/main.conf` (shipped by the `bluez` package).
+
+## Why each key
+
+| Key | Value | Reason |
+|-----|-------|--------|
+| `Name` | `bt2iap` | Friendly name shown to the phone during scan / pairing. |
+| `Class` | `0x240404` | Device class: Major = Audio/Video (0x04), Minor = Car Audio (0x08 nibble through standard encoding → car audio / hands-free / headset bundle). Encoded as `0x240404` per the Bluetooth assigned-numbers "Audio / HeadUnit" profile so a phone recognises us as a car stereo rather than a generic computer. |
+| `DiscoverableTimeout` | `0` | `0` = never time out. The Pi is always discoverable while powered. |
+| `PairableTimeout` | `0` | `0` = never time out. Pairing window stays open. |
+| `JustWorksRepairing` | `always` | Accept Just-Works re-pair requests from a previously bonded device without user prompting (needed because the Pi is headless in a car dash). |
+| `AutoEnable` (`[Policy]`) | `true` | On boot, BlueZ auto-powers every controller (no manual `power on` needed after every reboot). |
+| `AutoEnable` (`[General]`) | `true` | Redundant guard for older / forked BlueZ variants that read the key from `[General]`. Harmless on current BlueZ. |
+
+## Snippet to merge
+
+The block below is what `bootstrap.sh` (future T2 extension) will append / merge
+into `/etc/bluetooth/main.conf`. It is wrapped in sentinel comments so the
+merge is idempotent.
+
+```ini
+# --- begin bt2iap ---
+[General]
+Name = bt2iap
+Class = 0x240404
+DiscoverableTimeout = 0
+PairableTimeout = 0
+JustWorksRepairing = always
+AutoEnable = true
+
+[Policy]
+AutoEnable = true
+# --- end bt2iap ---
+```
+
+Note: BlueZ tolerates repeated `[General]` section headers in the same file;
+later values override earlier ones. The sentinel block is therefore safe to
+append even if the shipped `main.conf` already contains a `[General]` section.
+
+## Idempotent merge pattern (for bootstrap.sh T2 extension)
+
+The bootstrap script must treat this patch like the other sentinel-guarded
+merges already used for `/boot/config.txt`. Reference pattern:
+
+```bash
+BT_MAIN_CONF="/etc/bluetooth/main.conf"
+BT_MAIN_PATCH="${BT2IAP_ROOT}/bluetooth/main.conf.patch.block"   # pure .ini payload, no markdown
+
+SENTINEL_BEGIN="# --- begin bt2iap ---"
+SENTINEL_END="# --- end bt2iap ---"
+
+if grep -qF "${SENTINEL_BEGIN}" "${BT_MAIN_CONF}" 2>/dev/null; then
+  log "${BT_MAIN_CONF}: bt2iap block already present, skip"
+else
+  log "${BT_MAIN_CONF}: appending bt2iap block"
+  {
+    printf '\n%s\n' "${SENTINEL_BEGIN}"
+    cat "${BT_MAIN_PATCH}"
+    printf '%s\n' "${SENTINEL_END}"
+  } >> "${BT_MAIN_CONF}"
+fi
+```
+
+Re-running bootstrap.sh after the block is in place is a no-op: the `grep -qF`
+on the begin-sentinel short-circuits.
+
+To remove (if the patch ever needs to be revised):
+
+```bash
+sed -i '/# --- begin bt2iap ---/,/# --- end bt2iap ---/d' /etc/bluetooth/main.conf
+```
+
+Then re-run bootstrap.sh to re-insert the current version.
+
+### Alternative: per-key merge (not used)
+
+For reference only — this is the awk pattern that would replace individual
+keys in-place instead of appending a sentinel block. We deliberately do NOT
+use this because it makes rollbacks harder:
+
+```awk
+# NOT USED — documented for completeness.
+# Updates a single key within [General]; inserts if missing.
+awk -v section='[General]' -v key='Name' -v val='bt2iap' '
+  BEGIN { in_sec=0; wrote=0 }
+  /^\[/ { if (in_sec && !wrote) { print key " = " val; wrote=1 }
+          in_sec = ($0 == section) ? 1 : 0 }
+  in_sec && $0 ~ "^[[:space:]]*"key"[[:space:]]*=" { print key " = " val; wrote=1; next }
+  { print }
+  END { if (in_sec && !wrote) print key " = " val }
+' "${BT_MAIN_CONF}" > "${BT_MAIN_CONF}.new" && mv "${BT_MAIN_CONF}.new" "${BT_MAIN_CONF}"
+```
+
+The sentinel-block approach above is the canonical one.
+
+## Companion systemd drop-in: suppress SAP plugin
+
+Pi Zero 2 W has no SAP (SIM Access Profile) hardware. When bluetoothd starts
+with the default plugin set it logs `Failed to init sap plugin` on every boot.
+Harmless but noisy, and it can delay `bluetooth.service` going `active`.
+
+Recommended drop-in (bootstrap installs this in a later T2 pass):
+
+`/etc/systemd/system/bluetooth.service.d/override.conf`
+
+```ini
+# --- begin bt2iap ---
+[Service]
+# bluetoothd: drop SAP plugin (Pi has no SIM hardware; plugin init otherwise fails).
+# Also blacklist sap so BlueZ does not attempt to auto-load it.
+ExecStart=
+ExecStart=/usr/lib/bluetooth/bluetoothd --noplugin=sap
+# --- end bt2iap ---
+```
+
+Note: the empty `ExecStart=` line is the canonical systemd idiom for "discard
+the inherited ExecStart before setting a new one". Without it, systemd rejects
+the unit because multi-line `ExecStart=` is only allowed on Type=oneshot units.
+
+Apply with:
+
+```bash
+sudo install -d /etc/systemd/system/bluetooth.service.d
+sudo install -m 0644 bluetooth/bluetoothd-override.conf \
+  /etc/systemd/system/bluetooth.service.d/override.conf
+sudo systemctl daemon-reload
+sudo systemctl restart bluetooth
+```
+
+## Verification (on Pi, post-apply)
+
+```bash
+# BlueZ read the overrides:
+sudo systemctl restart bluetooth
+bluetoothctl show | grep -E 'Name|Class|Powered|Discoverable|Pairable'
+
+# Expected:
+#   Name: bt2iap
+#   Class: 0x00240404
+#   Powered: yes
+#   Discoverable: yes
+#   Pairable: yes
+```
+
+If `Class` reads back as `0x000000` the controller did not apply the config —
+check `journalctl -u bluetooth -n 100` for parser errors.

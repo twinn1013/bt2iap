@@ -1,0 +1,17 @@
+[Unit]
+Description=bt2iap — Bluetooth pairing agent (headless NoInputNoOutput)
+Documentation=https://github.com/twinn1013/bt2iap
+After=bluetooth.service
+Requires=bluetooth.service
+ConditionPathExists=/opt/bt2iap/bluetooth/pair-agent.sh
+
+[Service]
+Type=simple
+ExecStart=/opt/bt2iap/bluetooth/pair-agent.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

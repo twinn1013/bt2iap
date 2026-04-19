@@ -14,7 +14,7 @@ The Pi presents itself as an Apple iPod using the `ipod-gadget` kernel module ov
 
 ## Status
 
-Pre-hardware. Currently at T1 (gadget boot minimum). See `.omc/specs/deep-interview-pre-pi-prep.md` for the tiered plan.
+Pre-hardware. T1 complete. T2 (audio path) in progress / complete. See `.omc/specs/deep-interview-pre-pi-prep.md` for the tiered plan.
 
 ## Hardware
 
@@ -26,10 +26,12 @@ Pre-hardware. Currently at T1 (gadget boot minimum). See `.omc/specs/deep-interv
 
 ```
 bt2iap/
-|-- scripts/       # Pi-side automation (bootstrap, gadget load, product_id loop)
-|-- systemd/       # Unit files installed to /etc/systemd/system/
+|-- scripts/       # Pi-side automation (bootstrap, gadget load, product_id loop, audio bridge, verify)
+|-- systemd/       # Unit files installed to /etc/systemd/system/ (+ drop-in overrides)
 |-- boot/          # Patches for /boot/config.txt and /boot/cmdline.txt
-|-- docs/          # Research notes and verification checklists
+|-- bluetooth/     # BlueZ config patch and pairing agent script
+|-- alsa/          # ALSA routing config (A2DP sink -> loopback -> iPodUSB)
+|-- docs/          # Research notes, verification checklists, audio topology diagram
 |-- Makefile       # Mac-side quality gates
 `-- CLAUDE.md      # Project context for AI assistants
 ```
@@ -75,11 +77,82 @@ aplay -l | grep iPodUSB
 
 When the Pi is tethered to a PC (not the car), it should enumerate as "Apple iPod" in the host's USB device list.
 
+## T2 install (on Pi)
+
+These steps assume T1 bootstrap is complete (modules built, `ipod-gadget.service` enabled).
+
+```bash
+# 1. Apply BlueZ config patch (idempotent: only appends if sentinel absent).
+#    Use the pure-INI payload, NOT the Markdown .patch documentation file.
+sudo bash -c '
+  block=bluetooth/main.conf.patch.block
+  target=/etc/bluetooth/main.conf
+  if ! grep -qF "# --- begin bt2iap ---" "$target"; then
+    cat "$block" >> "$target"
+  fi
+'
+
+# 2. Install BlueALSA service drop-in
+sudo mkdir -p /etc/systemd/system/bluealsa.service.d
+sudo cp systemd/bluealsa.service.d/override.conf \
+        /etc/systemd/system/bluealsa.service.d/override.conf
+
+# 3. Install ALSA routing config
+sudo cp alsa/asound.conf /etc/asound.conf
+
+# 4. Install audio bridge script and service
+sudo cp scripts/audio-bridge.sh /opt/bt2iap/scripts/audio-bridge.sh
+sudo chmod +x /opt/bt2iap/scripts/audio-bridge.sh
+sudo cp systemd/audio-bridge.service /etc/systemd/system/audio-bridge.service
+
+# 5. Install pairing agent and its systemd unit
+sudo cp bluetooth/pair-agent.sh /opt/bt2iap/bluetooth/pair-agent.sh
+sudo chmod +x /opt/bt2iap/bluetooth/pair-agent.sh
+sudo cp systemd/pair-agent.service /etc/systemd/system/pair-agent.service
+
+# 6. Enable and start services
+sudo systemctl daemon-reload
+sudo systemctl enable --now bluealsa.service audio-bridge.service pair-agent.service
+
+# 7. Verify audio path
+sudo /opt/bt2iap/scripts/verify-audio.sh
+```
+
+## T2 verify
+
+See `docs/audio-topology.md` for the full signal-path diagram:
+
+```
+Phone --BT A2DP--> BlueALSA --> ALSA loopback (snd-aloop) --> g_ipod_audio --> USB (iPodUSB card)
+```
+
+Run the verification script on the Pi to confirm each stage is live:
+
+```bash
+sudo /opt/bt2iap/scripts/verify-audio.sh
+```
+
+The script runs 10 checks in order:
+1. `snd_aloop` module loaded (`lsmod | grep snd_aloop`)
+2. `Loopback` card present in `/proc/asound/cards`
+3. `iPodUSB` card present in `/proc/asound/cards` (depends on T1 `g_ipod_audio.ko`)
+4. `aplay -l` lists both Loopback and iPodUSB cards
+5. `/etc/asound.conf` exists and is non-empty
+6. `bluealsa.service` is active
+7. `bluetooth.service` is active
+8. `audio-bridge.service` is active
+9. Bluetooth controller powered (`bluetoothctl show | grep "Powered: yes"`)
+10. End-to-end probe: 1 second of silence routed through `default` PCM via the full chain without ALSA errors
+
+Exits 0 if all pass, 1 otherwise. Use `--verbose` for extra diagnostic dumps.
+
 ## Developer quality gates (on Mac)
 
 ```bash
 brew install shellcheck make
-make check-t1
+make check        # runs check-t1 then check-t2
+make check-t1     # T1 gates only
+make check-t2     # T2 gates only
 ```
 
 `make check-t1` runs:
@@ -87,6 +160,13 @@ make check-t1
 2. Systemd unit header validation (`[Unit]`, `[Service]`, `[Install]` present in `systemd/ipod-gadget.service`)
 3. Boot patch content check (`dtoverlay=dwc2` and `modules-load=dwc2`)
 4. Docs presence check (`docs/research-ipod-gadget.md`, `docs/verification-t1.md` exist and are non-empty)
+
+`make check-t2` runs:
+1. `shellcheck -x` on all files in `bluetooth/*.sh` and `scripts/*.sh`
+2. Systemd unit header validation (`[Unit]`, `[Service]`, `[Install]` in `systemd/audio-bridge.service` and `systemd/pair-agent.service`; `[Service]` in `systemd/bluealsa.service.d/override.conf`)
+3. ALSA config sanity check (`alsa/asound.conf` contains `pcm.*` or `type` directives)
+4. Docs presence check (`docs/audio-topology.md` exists and is non-empty)
+5. BlueZ patch payload check (`bluetooth/main.conf.patch.block` contains sentinel + `[General]`/`[Policy]`)
 
 ## Failure triage
 

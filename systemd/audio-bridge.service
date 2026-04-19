@@ -1,0 +1,20 @@
+[Unit]
+Description=bt2iap — Bluetooth A2DP to ALSA loopback bridge
+Documentation=https://github.com/twinn1013/bt2iap
+After=bluetooth.service ipod-gadget.service sound.target
+Requires=bluetooth.service
+Wants=bluealsa.service ipod-gadget.service
+ConditionPathExists=/opt/bt2iap/scripts/audio-bridge.sh
+
+[Service]
+Type=simple
+ExecStart=/opt/bt2iap/scripts/audio-bridge.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
