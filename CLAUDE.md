@@ -30,7 +30,7 @@ Before modifying anything iAP-related, check the current state of `oandrew/ipod-
 
 ## Architecture decisions already made
 
-- **Hardware:** Raspberry Pi Zero W (1st-gen, used, ~₩20k) for prototype → Pi Zero 2 W for final build. Pico/Pico W are explicitly rejected (no Linux, no gadget mode). Pi 4/5 rejected as overspec. BeagleBone Black rejected (no on-board Bluetooth).
+- **Hardware:** Raspberry Pi Zero 2 W (direct target — no separate prototype step; user decision 2026-04-19 skipped the Zero W 1st-gen prototype). Pico/Pico W are explicitly rejected (no Linux, no gadget mode). Pi 4/5 rejected as overspec. BeagleBone Black rejected (no on-board Bluetooth).
 - **OS:** Raspberry Pi OS Lite (64-bit), headless (Wi-Fi + SSH pre-configured via Imager).
 - **USB role:** Gadget/device mode via `dwc2` (`dtoverlay=dwc2` in `/boot/config.txt`, `modules-load=dwc2` in `/boot/cmdline.txt` after `rootwait`). The Pi's "USB" port is the data port; the "PWR" port is power-only.
 - **Audio path:** Bluetooth A2DP sink → ALSA loopback → `iPodUSB` ALSA card (exposed by `g_ipod_audio.ko`). Preferred stack is `bluez` + `bluealsa` (lighter than PulseAudio/PipeWire, and the Pi OS move to PipeWire is noted as a risk).
@@ -73,7 +73,7 @@ Verification signals after loading modules:
 
 ## Known failure modes — triage in this order
 
-1. **`dmesg` shows authentication error from the head unit** → MFi path is stricter than assumed; this approach is dead. Fall back to FM transmitter or aftermarket head unit. Do not spend time tweaking module params past this point.
+1. **`dmesg` shows authentication error from the head unit** → MFi path is stricter than assumed. **Do NOT fall back to FM transmitter** (user policy 2026-04-19: pursue iAP to completion). Recovery order: exhaust candidate `product_id`s from `doc/apple-usb.ids` → investigate MFi authentication chip add-on (hardware breakout feasibility) → scan upstream `oandrew/ipod-gadget` issues/forks for known auth-handshake fixes → iAP protocol reverse-engineering as last resort.
 2. **MMCS sees the device but won't play** → iterate `product_id` from `doc/apple-usb.ids`. This is the single most likely tuning knob.
 3. **Pi boot-loops in the car** → car USB-A is under 1A; use a 2A+ cigarette-lighter USB charger for power, keep only the data line from the head unit.
 4. **Audio path issues** → prefer `bluealsa` over PulseAudio/PipeWire when debugging routing; the doc deliberately picked BlueALSA for resource/stability reasons.
@@ -81,7 +81,7 @@ Verification signals after loading modules:
 ## Scope discipline
 
 - Music playback is the goal. Track metadata display and steering-wheel buttons require extra iAP message implementation and are explicitly out of the initial scope.
-- Expected outcome is "50/50 success." If blocked on head-unit auth, the documented exit is the FM transmitter, not deeper reverse-engineering.
+- Expected outcome is ambitious. If blocked on head-unit auth, commit to deeper iAP investigation (product_id exhaustion → MFi chip feasibility → reverse-engineering). **FM transmitter fallback is explicitly rejected by user policy (2026-04-19) — iAP to completion.**
 
 ## Working directory layout
 

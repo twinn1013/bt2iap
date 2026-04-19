@@ -1,0 +1,21 @@
+# boot/config.txt.patch
+#
+# Lines to APPEND to /boot/config.txt on the Pi.
+# bootstrap.sh detects the sentinel "# --- begin bt2iap ---" before appending
+# so this block is safe to apply multiple times (idempotent).
+#
+# Purpose: enable dwc2, the USB On-The-Go / gadget-mode driver for the
+# Raspberry Pi Zero 2 W. Without this overlay the Pi enumerates its USB
+# port in host mode and the ipod-gadget kernel modules will not load.
+#
+# Reference: CLAUDE.md § "USB role" — gadget/device mode via dwc2
+#   dtoverlay=dwc2 must appear in /boot/config.txt
+#   modules-load=dwc2 must follow rootwait in /boot/cmdline.txt
+#
+# Do NOT add this to a Pi 4/5 — those use a different USB controller.
+# Verified target: Pi Zero 2 W running Raspberry Pi OS Lite 64-bit.
+
+# --- begin bt2iap ---
+# Raspberry Pi Zero 2 W USB gadget support for iPod emulation (bt2iap)
+dtoverlay=dwc2
+# --- end bt2iap ---

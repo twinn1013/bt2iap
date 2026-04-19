@@ -1,0 +1,17 @@
+[Unit]
+Description=bt2iap — iPod USB gadget loader for Outlander MMCS
+Documentation=https://github.com/twinn1013/bt2iap
+After=local-fs.target sys-kernel-config.mount
+ConditionPathExists=/opt/bt2iap/scripts/load-gadget.sh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/bt2iap/scripts/load-gadget.sh
+ExecStop=/usr/bin/env bash -c 'rmmod g_ipod_gadget g_ipod_hid g_ipod_audio 2>/dev/null || true'
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

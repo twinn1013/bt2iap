@@ -1,0 +1,38 @@
+# boot/cmdline.txt.patch
+#
+# /boot/cmdline.txt is a SINGLE-LINE file — appending would break it.
+# bootstrap.sh must INSERT the token "modules-load=dwc2" immediately after
+# "rootwait" on that one line, then write the file back.
+#
+# Purpose: instruct the kernel to load the dwc2 USB-gadget driver during
+# early boot, before any service manager starts. This is required for the
+# ipod-gadget modules to bind to the USB OTG controller at boot time.
+#
+# Reference: CLAUDE.md § "USB role"
+#   modules-load=dwc2 must appear after rootwait in /boot/cmdline.txt
+#
+# ---------------------------------------------------------------------------
+# Idempotent sed one-liner used by bootstrap.sh
+# ---------------------------------------------------------------------------
+#
+# The substitution fires only when "modules-load=dwc2" is NOT already present
+# (the /! guard), so running bootstrap.sh twice is safe.
+#
+#   sed -i '/modules-load=dwc2/! s/\brootwait\b/rootwait modules-load=dwc2/' /boot/cmdline.txt
+#
+# ---------------------------------------------------------------------------
+# Manual-edit example
+# ---------------------------------------------------------------------------
+#
+# BEFORE (typical Raspberry Pi OS Lite 64-bit default):
+#   console=serial0,115200 console=tty1 root=PARTUUID=xxxxxxxx-02 rootfstype=ext4 fsck.repair=yes rootwait quiet init=/usr/lib/raspberrypi-sys-mods/firstboot
+#
+# AFTER (with dwc2 inserted immediately after rootwait):
+#   console=serial0,115200 console=tty1 root=PARTUUID=xxxxxxxx-02 rootfstype=ext4 fsck.repair=yes rootwait modules-load=dwc2 quiet init=/usr/lib/raspberrypi-sys-mods/firstboot
+#
+# Notes:
+#   - Keep everything on a single line — do NOT introduce newlines.
+#   - The PARTUUID value is unique to your SD card; the example above is
+#     illustrative only.
+#   - "quiet" and trailing tokens stay in place; only "rootwait" gains a
+#     suffix token.
